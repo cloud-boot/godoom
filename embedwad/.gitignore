@@ -1,0 +1,5 @@
+# The WAD blob is too big to commit ( ≈4 MiB shareware / ≈28 MiB Freedoom).
+# Operators drop it here before building with -tags embedwad. See
+# doom1_wad.go for sourcing instructions.
+doom1.wad
+freedoom1.wad
