@@ -57,6 +57,11 @@ func (w *wadFile) Read(p []byte) (int, error)         { return w.r.Read(p) }
 func (w *wadFile) Close() error                       { return nil }
 func (w *wadFile) Seek(off int64, w2 int) (int64, error) { return w.r.Seek(off, w2) }
 
+// ReadAt satisfies io.ReaderAt — required by gore's w_Read path which
+// asserts the WAD file is an io.ReaderAt for random-access lump
+// reading (doom.go:40794). bytes.Reader has ReadAt; just delegate.
+func (w *wadFile) ReadAt(p []byte, off int64) (int, error) { return w.r.ReadAt(p, off) }
+
 type wadInfo struct{ f *wadFS }
 
 func (i wadInfo) Name() string       { return i.f.name }
