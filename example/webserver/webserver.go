@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/AndreRenaud/gore"
+	"github.com/cloud-boot/godoom"
 )
 
 type keyChange struct {

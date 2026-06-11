@@ -1,109 +1,112 @@
-# 🔥 GORE 🔥
-## A Minimal Go Port of doomgeneric
+# cloud-boot/godoom
+
+A pure-Go DOOM engine adapted for cloud-boot's bare-metal TamaGo + UEFI demo
+target.
+
+## Fork origin
+
+This repository is a fork of [AndreRenaud/gore](https://github.com/AndreRenaud/gore)
+at commit `7dc6c65493b8a29e0b93dd00dac21a2f10a0068a` (2026-05-11).
+
+`gore` itself is a Go transpilation of [doomgeneric](https://github.com/ozkl/doomgeneric)
+performed with [`modernc.org/ccgo/v4`](https://gitlab.com/cznic/doomgeneric.git)
+and then hand-cleaned. The engine has no CGO dependency, only standard
+library, and exposes its host bindings through a small `DoomFrontend`
+interface -- exactly the shape we need to wire DOOM into cloud-boot's
+virtio device tree.
+
+The upstream `README.md` is preserved as `README.upstream.md`.
+
+## Why this fork exists
+
+cloud-boot is building an OS-agnostic OCI boot architecture on top of
+TamaGo + UEFI. To showcase Phase 3 we want to run classic DOOM as the
+"OS payload", with rendering, sound, and input wired straight to virtio
+devices instead of SDL / X11 / a kernel.
+
+This fork therefore adds:
+
+- `backend/tamago/` -- a new `DoomFrontend` implementation that drives
+  cloud-boot's virtio-gpu, virtio-sound, and virtio-input drivers
+  (currently stub interfaces; real wiring lands once
+  [`go-virtio/sound`](https://github.com/go-virtio/sound) and
+  [`go-virtio/input`](https://github.com/go-virtio/input) ship in their
+  sibling sprints).
+- `internal/embedwad/` -- an `io/fs.FS` shim that serves a WAD blob from
+  memory, so the engine can load the IWAD without a real filesystem.
+
+The upstream `gore` engine (`doom.go`, ~990 KB of transpiled code, plus
+`doom_test.go`) and its existing terminal / web / Ebitengine / SDL
+examples are kept verbatim, so we can rebase against upstream cleanly.
+
+## License boundary
+
+- The DOOM engine (`doom.go`, `doom_test.go`, `LICENSE`) inherits
+  **GPL-2.0-only** from `doomgeneric` / `gore`. All cloud-boot additions
+  in this repository (`backend/tamago`, `internal/embedwad`) are released
+  under the same license, by necessity (linking + derived work).
+- The rest of the cloud-boot stack is **BSD-3-Clause** and is *not*
+  affected: cloud-boot's bootloader, runtime, and host components do not
+  import this package. The integration happens via a thin separate
+  "livedoom" boot artifact whose only job is to call `godoom.Run`.
+  That artifact will itself be GPL-2.0, isolated to a single directory in
+  the cloud-boot/tamago-uefi tree.
+
+## Layout
 
 ```
-    ██████╗  ██████╗  ██████╗ ███╗   ███╗
-    ██╔══██╗██╔═══██╗██╔═══██╗████╗ ████║
-    ██║  ██║██║   ██║██║   ██║██╔████╔██║
-    ██║  ██║██║   ██║██║   ██║██║╚██╔╝██║
-    ██████╔╝╚██████╔╝╚██████╔╝██║ ╚═╝ ██║
-    ╚═════╝  ╚═════╝  ╚═════╝ ╚═╝     ╚═╝
-                    .GO
+.
+|-- doom.go                     # upstream gore engine (transpiled DOOM)
+|-- doom_test.go                # upstream gore reference-frame tests
+|-- example/                    # upstream gore examples (termdoom, web, ...)
+|-- backend/
+|   `-- tamago/                 # NEW: DoomFrontend over virtio-gpu/sound/input
+|-- internal/
+|   `-- embedwad/               # NEW: io/fs.FS shim over an in-memory WAD
+|-- PORT.md                     # Adaptation plan (read this)
+`-- README.md
 ```
 
-## TLDR
-Tired of reading already?
+## Status
+
+| Aspect                            | Status                                    |
+|-----------------------------------|-------------------------------------------|
+| Pure Go (CGO=0)                   | yes (engine + all new code)               |
+| Builds on Go 1.26.4               | yes (lib + tamago backend + pure-Go examples) |
+| Cross-compiles linux/amd64        | yes (CGO=0)                               |
+| Cross-compiles linux/arm64        | yes (CGO=0)                               |
+| Runs shareware DOOM1.WAD          | yes (engine ticks; verified via TestMenus harness) |
+| TamaGo backend wired              | scaffold only; real drivers land in follow-up sprint |
+| Music (MUS -> MIDI)               | out of scope for sprint 1                 |
+| Multiplayer                       | out of scope                              |
+
+## Quick smoke test (host)
+
 ```bash
-wget https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad
-go run github.com/AndreRenaud/gore/example/termdoom@latest
+# 1. fetch the shareware IWAD (free re-release):
+curl -sSL -o doom1.wad https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad
+
+# 2. terminal renderer (pure Go):
+CGO_ENABLED=0 go run ./example/termdoom -iwad doom1.wad
 ```
 
-## 💀 WHAT FRESH HELL IS THIS?
+## cloud-boot integration points
 
-This is a **minimal, platform-agnostic Go port** of the legendary DOOM engine, transpiled from the `doomgeneric` codebase. No CGo. No platform dependencies. Just pure, unadulterated demon-slaying action powered by the glory of Go's cross-compilation.
+The TamaGo backend in `backend/tamago/` consumes three driver
+interfaces declared in that package:
 
-The original C code was converted to Go using (modernc.org/ccgo/v4), by cznic (https://gitlab.com/cznic/doomgeneric.git). This was then manually cleaned up to remove a lot of manual pointer manipulation, and make things more Go-ish, whilst still maintaining compatibility with the original Doom, and its overall structure.
+| Frontend method          | Backend interface | Driver repo (sibling) |
+|--------------------------|-------------------|-----------------------|
+| `DrawFrame(*image.RGBA)` | `GPU.Flip`        | `github.com/go-virtio/gpu`   |
+| `CacheSound / PlaySound` | `Sound.Cache/Play`| `github.com/go-virtio/sound` |
+| `GetEvent(*DoomEvent)`   | `Input.Poll`      | `github.com/go-virtio/input` |
 
-## 🔫 FEATURES
+The WAD is delivered to the engine via `gore.SetVirtualFileSystem(fs.FS)`
+using the `internal/embedwad` helper, whose backing bytes can come from
+either (a) a `go:embed` blob in the cloud-boot "livedoom" boot artifact,
+or (b) a runtime stream from a cloud-boot OCI artifact mount.
 
-- ✅ **Platform Agnostic**: Runs anywhere Go runs
-- ✅ **Minimal Dependencies**: Only requires Go standard library
-- ✅ **Multiple DOOM Versions**: Supports DOOM, DOOM II, Ultimate DOOM, Final DOOM
-- ✅ **WAD File Support**: Bring your own demons via WAD files
-- ✅ **Memory Safe**: Go's GC protects you from buffer overflows (but not from Cacodemons) (WIP - 95% complete)
-- ✅ **Cross Compilation**: Build for any target from any platform
+The actual wire-in (`phase3_oci_doom_boot.go` in cloud-boot/tamago-uefi)
+is a follow-up sprint and is intentionally NOT done here.
 
-### Missing Features
-- One instance per process: Still has a lot of the original global variables, which prevent multiple instances from running
-- Random exported consts: The original C code used the standard convention of all upper case for const/enum values. This results in the Go code assuming these are exported values, when really they're internal state info
-- Nice external API for state inspection: It would be good to be able to change the running state externally, without exposing everything in such a raw way
-- `unsafe`: There are still some instances of `unsafe` in the code. It would be good to get rid of these to have better bounds access guarantees
-
-## 🚀 INSTALLATION
-
-### Prerequisites
-- Go 1.24+
-- A WAD file
-
-### Running the examples
-These examples are both very minimal, and whilst technically run the game, they are not really fully complete games in their own right (ie: Missing key bindings etc...). They all assume that a Doom wad is available in the current directory. The shareware Doom wad is available at https://www.doomworld.com/classicdoom/info/shareware.php, or bring your own from a commercial copy.
-
-```bash
-git clone https://github.com/AndreRenaud/gore
-cd gore
-```
-
-#### Terminal based
-This example renders the Doom output using ANSI color codes suitable for a 256-bit color capable terminal. It has very limited input support, as terminals typically do not support key-up events, or control-key support. So `fire` has been remapped to `,`, and it is necessary to repeatedly tap keys to get them to continue, as opposed to press & hold.
-```bash
-go run ./example/termdoom -iwad doom1.wad
-```
-
-<video width="640" src="https://github.com/user-attachments/assets/c461e38f-5948-4485-bf84-7b6982580a4e"></video>
-
-#### Web based
-```bash
-go run ./example/webserver
-```
-Now browse to http://localhost:8080 to play
-
-#### Ebitengine
-```bash
-go run ./example/ebitengine
-```
-The window should pop up to run Doom
-
-### Getting WAD Files
-You need the game data files (WAD) to run DOOM:
-- **Shareware**: Download `doom1.wad` (free)
-- **Retail**: Use your legally owned copy of DOOM.WAD or doom2.wad
-- **Ultimate DOOM**: doom.wad from Ultimate DOOM
-- **Final DOOM**: tnt.wad or plutonia.wad
-
-## 🔧 PLATFORM IMPLEMENTATION
-
-Similar to `doomgeneric`, the actual input/output is provided externally. The following interface is required:
-```go
-type DoomFrontend interface {
-    DrawFrame(img *image.RGBA)
-    SetTitle(title string)
-    GetEvent(event *DoomEvent) bool
-    CacheSound(name string, data []byte)
-    PlaySound(name string, channel, vol, sep int)
-}
-```
-
-| Function | Purpose |
-|----------|---------|
-| `DrawFrame()` | Render the frame to your display |
-| `SetTitle()` | Set the window title as appropriate to the given WAD |
-| `GetEvent()` | Report key presses/mouse movements |
-| `CacheSound()` | This will supply sound effect 8-bit 11025Hz mono audio samples |
-| `PlaySound()` | Play a given sound effect |
-
-Only `DrawFrame` and `GetEvent` are vital to implement to get a functioning game. The others can be left blank, and things will still basically function fine.
-
-## 📜 LICENSE
-
-DOOM source code is released under the GNU General Public License.  
-This Go port maintains the same licensing terms.
+See `PORT.md` for the detailed adaptation plan.

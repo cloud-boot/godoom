@@ -1,4 +1,4 @@
-module github.com/AndreRenaud/gore
+module github.com/cloud-boot/godoom
 
 go 1.26.0
 

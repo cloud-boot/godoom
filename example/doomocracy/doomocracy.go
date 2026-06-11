@@ -14,7 +14,7 @@ import (
 
 	"embed"
 
-	"github.com/AndreRenaud/gore"
+	"github.com/cloud-boot/godoom"
 )
 
 //go:embed static/*
