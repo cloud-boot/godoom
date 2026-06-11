@@ -67,10 +67,11 @@ type KeyEvent struct {
 // Frontend implements [gore.DoomFrontend] on top of cloud-boot virtio
 // devices. It is created via [New] and then handed to [gore.Run].
 type Frontend struct {
-	gpu   GPU
-	snd   Sound
-	in    Input
-	title string
+	gpu        GPU
+	snd        Sound
+	in         Input
+	title      string
+	frameCount uint64 // R-doom1b: tracks DG_DrawFrame call count for diag visibility
 }
 
 // New returns a Frontend wired to the given devices. Any of gpu, snd, or in
@@ -82,11 +83,31 @@ func New(gpu GPU, snd Sound, in Input) *Frontend {
 }
 
 // DrawFrame ships the rendered DOOM frame to the virtio-gpu scanout.
+//
+// R-doom1b (2026-06-11): surface the Flip error + tick counter so the
+// operator can see whether the engine main loop is producing frames at
+// all + whether virtio-gpu Flush is failing. Throttled to first frame
+// + every 35th tick (~1 sec at DOOM's 35 Hz tic rate) so the serial
+// console doesn't drown in per-frame chatter.
 func (f *Frontend) DrawFrame(img *image.RGBA) {
 	if f.gpu == nil {
 		return
 	}
-	_ = f.gpu.Flip(img)
+	f.frameCount++
+	err := f.gpu.Flip(img)
+	if f.frameCount == 1 {
+		if err != nil {
+			println("tamago-frontend: first DrawFrame FAILED:", err.Error())
+		} else {
+			println("tamago-frontend: first DrawFrame OK (engine producing frames)")
+		}
+	} else if f.frameCount%35 == 0 {
+		if err != nil {
+			println("tamago-frontend: DrawFrame tick", int64(f.frameCount), "FAILED:", err.Error())
+		} else {
+			println("tamago-frontend: DrawFrame tick", int64(f.frameCount), "OK")
+		}
+	}
 }
 
 // SetTitle records the current WAD title. With no console wired up yet,
